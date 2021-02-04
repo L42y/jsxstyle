@@ -6,18 +6,22 @@ import {
   DeprecatedJsxstyleComponentName,
   getStyleCache,
   JsxstyleComponentName,
+  Falsey,
 } from 'jsxstyle-utils';
 import * as React from 'react';
 
 type IntrinsicElement = keyof JSX.IntrinsicElements;
 
+type ComponentOrIntrinsicElement =
+  | IntrinsicElement
+  | React.FunctionComponent<any>
+  | React.ComponentClass<any>;
+
 type ValidComponentPropValue =
   | false
   | null
   | undefined
-  | IntrinsicElement
-  | React.FunctionComponent<any>
-  | React.ComponentClass<any>;
+  | ComponentOrIntrinsicElement;
 
 /**
  * Generic that returns either the extracted props type for a React component
@@ -48,12 +52,8 @@ export { CSSProperties };
 export const cache = getStyleCache();
 
 /** Props that will be passed through to whatever component is specified */
-export interface StylableComponentProps<T extends ValidComponentPropValue> {
-  /** passed as-is through to the underlying component */
-  className?: string | null | false;
-  /** passed as-is through to the underlying component */
-  style?: ExtractProps<T>['style'] | null | false;
-}
+export interface StylableComponentProps<T extends ValidComponentPropValue>
+  extends Falsey<Pick<ExtractProps<T>, 'className' | 'style'>> {}
 
 /** Common props */
 interface SharedProps<T extends ValidComponentPropValue>
@@ -84,25 +84,119 @@ export type JsxstyleProps<C extends ValidComponentPropValue> =
   | JsxstyleDefaultProps
   | JsxstylePropsWithComponent<C>;
 
+type CustomPropsObj = Record<string, (value: any) => CSSProperties | null>;
+
+type MakeComponentProps<
+  P extends Record<string, any>,
+  K extends keyof P,
+  F extends CustomPropsObj = {}
+> = Omit<CSSProperties, K | keyof F> &
+  Pick<P, K | 'className' | 'style'> &
+  { [KF in keyof F]?: Parameters<F[KF]>[0] };
+
+interface MakeComponentOptions<
+  P extends ExtractProps<C>,
+  K extends keyof P,
+  F extends CustomPropsObj,
+  C extends ComponentOrIntrinsicElement = 'div'
+> {
+  component?: C;
+  componentProps?: K[];
+  customProps?: F;
+  defaultStyles?: CSSProperties | null;
+  displayName: string;
+}
+
+const defaultTagName = 'div';
+
+export const EXPERIMENTAL_makeComponent = <
+  P extends ExtractProps<C>,
+  K extends keyof P,
+  F extends CustomPropsObj,
+  C extends ComponentOrIntrinsicElement
+>({
+  component,
+  componentProps,
+  customProps,
+  defaultStyles,
+  displayName,
+}: MakeComponentOptions<P, K, F, C>) => {
+  // always pass `style` and `className` props through
+  const allowedProps: Record<string, true> = { style: true, className: true };
+  if (Array.isArray(componentProps)) {
+    for (const propName of componentProps) {
+      allowedProps[propName as string] = true;
+    }
+  }
+
+  const customComponent: React.FC<MakeComponentProps<P, K, F>> = (props) => {
+    const componentProps: Record<string, any> = {};
+    const styleProps: Record<string, any> = {};
+    // merging default style props here rather than using `defaultProps` so that the default props don't show up in React dev tools.
+    if (defaultStyles) Object.assign(styleProps, defaultStyles);
+
+    const keys = Object.keys(props);
+    for (const key of keys) {
+      let value = props[key];
+
+      if (allowedProps[key]) {
+        componentProps[key] = value;
+      } else {
+        const getProp = customProps && customProps[key];
+        if (getProp) value = getProp(value);
+        if (value == null) continue;
+        styleProps[key] = value;
+      }
+    }
+
+    const className = cache.getClassName(styleProps, componentProps.className);
+    if (className) {
+      componentProps.className = className;
+    }
+    return React.createElement(
+      component || defaultTagName,
+      componentProps,
+      props.children
+    );
+  };
+
+  if (displayName) {
+    customComponent.displayName = `jsxstyle(${displayName})`;
+  } else {
+    // dev-only generated displayName
+    if (process.env.NODE_ENV === 'development') {
+      if (typeof component === 'function') {
+        customComponent.displayName = `jsxstyle(${(component as any).name})`;
+      } else if (typeof component === 'string') {
+        customComponent.displayName = `jsxstyle(${component})`;
+      }
+      customComponent.displayName = `jsxstyle($custom)`;
+    }
+  }
+
+  return customComponent;
+};
+
 function factory(
   displayName: JsxstyleComponentName | DeprecatedJsxstyleComponentName
 ) {
-  const tagName = 'div';
   const defaultProps = componentStyles[displayName];
 
   const component = <T extends ValidComponentPropValue = 'div'>(
     props: React.PropsWithChildren<JsxstyleProps<T>>
   ): React.ReactElement => {
-    const Component: any = props.component || tagName;
-    const className = cache.getClassName(props, props.className);
+    const Component: any = props.component || defaultTagName;
+    // `className` prop is only available in types if the `component` supports it
+    const className = cache.getClassName(props, (props as any).className);
     const componentProps: Record<string, any> = { ...props.props };
 
     if (className) {
       componentProps.className = className;
     }
 
-    if (props.style) {
-      componentProps.style = props.style;
+    // `style` prop is only available in types if the `component` supports it
+    if ((props as any).style) {
+      componentProps.style = (props as any).style;
     }
 
     return React.createElement(Component, componentProps, props.children);
@@ -116,7 +210,7 @@ function factory(
 
 let depFactory = factory;
 
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV === 'development') {
   depFactory = function (displayName: DeprecatedJsxstyleComponentName) {
     const defaultProps = componentStyles[displayName];
     let hasWarned = false;
@@ -160,8 +254,11 @@ export const Grid: JsxstyleComponent = factory('Grid');
 export const Table: JsxstyleComponent = depFactory('Table');
 export const TableRow: JsxstyleComponent = depFactory('TableRow');
 export const TableCell: JsxstyleComponent = depFactory('TableCell');
-// <Row display="inline-flex" />
+
+// <Row />
 export const Flex: JsxstyleComponent = depFactory('Flex');
+
+// <Row display="inline-flex" />
 export const InlineFlex: JsxstyleComponent = depFactory('InlineFlex');
 
 export { useMatchMedia } from './useMatchMedia';

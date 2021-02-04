@@ -80,5 +80,5 @@ it('has a runtime size of less than 3KB', async () => {
   expect(code).not.toMatch(/require\(['"]jsxstyle['"]\)/);
   expect(code).not.toMatch(/require\(['"]jsxstyle-utils['"]\)/);
   // check file size
-  expect(gzipLen).toBeLessThan(1024 * 3);
+  expect(gzipLen).toBeLessThan(1024 * 3.5);
 });

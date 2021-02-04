@@ -10,4 +10,4 @@ export { getStyleKeysForProps } from './getStyleKeysForProps';
 export { pseudoelements, pseudoclasses } from './getStyleKeysForProps';
 export { hyphenateStyleName } from './hyphenateStyleName';
 export { stringHash } from './stringHash';
-export { CSSProperties } from './types';
+export { CSSProperties, Falsey } from './types';
