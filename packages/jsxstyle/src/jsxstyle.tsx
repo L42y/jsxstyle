@@ -94,24 +94,31 @@ type MakeComponentProps<
   Pick<P, K | 'className' | 'style'> &
   { [KF in keyof F]?: Parameters<F[KF]>[0] };
 
+interface MakeComponentOptionsWithoutCustomProps<
+  P extends ExtractProps<C>,
+  K extends keyof P,
+  C extends ComponentOrIntrinsicElement = 'div'
+> {
+  component?: C;
+  componentProps?: K[];
+  defaultStyles?: CSSProperties | null;
+  displayName: string;
+}
+
 interface MakeComponentOptions<
   P extends ExtractProps<C>,
   K extends keyof P,
   F extends CustomPropsObj,
   C extends ComponentOrIntrinsicElement = 'div'
-> {
-  component?: C;
-  componentProps?: K[];
+> extends MakeComponentOptionsWithoutCustomProps<P, K, C> {
   customProps?: F;
-  defaultStyles?: CSSProperties | null;
-  displayName: string;
 }
 
 const defaultTagName = 'div';
 
 export const EXPERIMENTAL_makeComponent = <
   P extends ExtractProps<C>,
-  K extends keyof P,
+  K extends Extract<keyof P, string>,
   F extends CustomPropsObj,
   C extends ComponentOrIntrinsicElement
 >({
@@ -129,27 +136,32 @@ export const EXPERIMENTAL_makeComponent = <
     }
   }
 
-  const customComponent: React.FC<MakeComponentProps<P, K, F>> = (props) => {
+  const customComponent = (
+    props: MakeComponentProps<P, K, F>
+  ): React.ReactElement<any, any> => {
     const componentProps: Record<string, any> = {};
     const styleProps: Record<string, any> = {};
     // merging default style props here rather than using `defaultProps` so that the default props don't show up in React dev tools.
     if (defaultStyles) Object.assign(styleProps, defaultStyles);
 
-    const keys = Object.keys(props);
-    for (const key of keys) {
-      let value = props[key];
+    // separate component props and style props
+    for (const key in props) {
+      const value = props[key];
 
       if (allowedProps[key]) {
         componentProps[key] = value;
       } else {
         const getProp = customProps && customProps[key];
-        if (getProp) value = getProp(value);
-        if (value == null) continue;
-        styleProps[key] = value;
+        if (getProp) {
+          Object.assign(styleProps, getProp(value));
+        } else {
+          if (value == null) continue;
+          styleProps[key] = value;
+        }
       }
     }
 
-    const className = cache.getClassName(styleProps, componentProps.className);
+    const className = cache.getClassName(styleProps, props.className);
     if (className) {
       componentProps.className = className;
     }
@@ -160,19 +172,21 @@ export const EXPERIMENTAL_makeComponent = <
     );
   };
 
-  if (displayName) {
-    customComponent.displayName = `jsxstyle(${displayName})`;
-  } else {
-    // dev-only generated displayName
-    if (process.env.NODE_ENV === 'development') {
-      if (typeof component === 'function') {
-        customComponent.displayName = `jsxstyle(${(component as any).name})`;
-      } else if (typeof component === 'string') {
-        customComponent.displayName = `jsxstyle(${component})`;
-      }
-      customComponent.displayName = `jsxstyle($custom)`;
-    }
-  }
+  customComponent.displayName = `jsxstyle(${displayName})`;
+
+  /** Create a new component that inherits `customProps` from the parent component */
+  customComponent.makeComponent = <
+    P2 extends ExtractProps<C2>,
+    K2 extends Extract<keyof P2, string>,
+    C2 extends ComponentOrIntrinsicElement
+  >(
+    options: MakeComponentOptionsWithoutCustomProps<P2, K2, C2>
+  ) =>
+    EXPERIMENTAL_makeComponent<P2, K2, F, C2>({
+      ...options,
+      displayName: displayName + '.' + options.displayName,
+      customProps,
+    });
 
   return customComponent;
 };
